@@ -116,6 +116,8 @@ func InitDB() (err error) {
 		if !config.IsMasterNode {
 			return nil
 		}
+		return nil
+
 		logger.SysLog("database migration started")
 
 		migrationBefore(DB)
