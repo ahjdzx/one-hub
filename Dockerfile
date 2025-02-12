@@ -14,8 +14,9 @@ RUN DISABLE_ESLINT_PLUGIN='true' VITE_APP_VERSION=$(cat VERSION) npm run build
 FROM golang AS builder2
 
 ENV GO111MODULE=on \
-    CGO_ENABLED=1 \
-    GOOS=linux
+  GOPROXY=https://goproxy.cn,direct \
+  CGO_ENABLED=1 \
+  GOOS=linux
 
 WORKDIR /build
 ADD go.mod go.sum ./
@@ -27,9 +28,9 @@ RUN go build -ldflags "-s -w -X 'one-api/common.Version=$(cat VERSION)' -extldfl
 FROM alpine
 
 RUN apk update \
-    && apk upgrade \
-    && apk add --no-cache ca-certificates tzdata \
-    && update-ca-certificates 2>/dev/null || true
+  && apk upgrade \
+  && apk add --no-cache ca-certificates tzdata \
+  && update-ca-certificates 2>/dev/null || true
 
 COPY --from=builder2 /build/one-api /
 EXPOSE 3000
