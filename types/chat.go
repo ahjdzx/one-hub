@@ -440,6 +440,20 @@ func (c *ChatCompletionStreamResponse) GetResponseText() (responseText string) {
 	return
 }
 
+func (c *ChatCompletionStreamResponse) Copy() *ChatCompletionStreamResponse {
+	choices := make([]ChatCompletionStreamChoice, len(c.Choices))
+	copy(choices, c.Choices)
+	return &ChatCompletionStreamResponse{
+		ID:                c.ID,
+		Object:            c.Object,
+		Created:           c.Created,
+		Model:             c.Model,
+		Choices:           choices,
+		PromptAnnotations: c.PromptAnnotations,
+		Usage:             c.Usage,
+	}
+}
+
 type ChatAudio struct {
 	Voice  string `json:"voice"`
 	Format string `json:"format"`

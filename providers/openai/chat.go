@@ -13,10 +13,12 @@ import (
 )
 
 type OpenAIStreamHandler struct {
-	Usage      *types.Usage
-	ModelName  string
-	isAzure    bool
-	EscapeJSON bool
+	Usage                     *types.Usage
+	ModelName                 string
+	isAzure                   bool
+	EscapeJSON                bool
+	IsFirstResponse           bool
+	SendLastReasoningResponse bool
 }
 
 func (p *OpenAIProvider) CreateChatCompletion(request *types.ChatCompletionRequest) (openaiResponse *types.ChatCompletionResponse, errWithCode *types.OpenAIErrorWithStatusCode) {
@@ -89,10 +91,12 @@ func (p *OpenAIProvider) CreateChatCompletionStream(request *types.ChatCompletio
 	}
 
 	chatHandler := OpenAIStreamHandler{
-		Usage:      p.Usage,
-		ModelName:  request.Model,
-		isAzure:    p.IsAzure,
-		EscapeJSON: p.StreamEscapeJSON,
+		Usage:                     p.Usage,
+		ModelName:                 request.Model,
+		isAzure:                   p.IsAzure,
+		EscapeJSON:                p.StreamEscapeJSON,
+		IsFirstResponse:           true,
+		SendLastReasoningResponse: false,
 	}
 
 	return requester.RequestStream[string](p.Requester, resp, chatHandler.HandlerChatStream)
@@ -154,6 +158,44 @@ func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan s
 	}
 
 	if h.EscapeJSON {
+
+		// Handle first message
+		if h.IsFirstResponse {
+			response := openaiResponse.ChatCompletionStreamResponse.Copy()
+			for j := range response.Choices {
+				response.Choices[j].Delta.Content = "<think>\n"
+				response.Choices[j].Delta.ReasoningContent = ""
+			}
+			if data, err := json.Marshal(response); err == nil {
+				dataChan <- string(data)
+			}
+			h.IsFirstResponse = false
+		}
+
+		// Process each choice
+		for _, choice := range openaiResponse.ChatCompletionStreamResponse.Choices {
+
+			// Handle transition from thinking to content
+			if len(choice.Delta.Content) > 0 && !h.SendLastReasoningResponse {
+				response := openaiResponse.ChatCompletionStreamResponse.Copy()
+				for j := range response.Choices {
+					response.Choices[j].Delta.Content = "\n</think>"
+					response.Choices[j].Delta.ReasoningContent = ""
+				}
+				h.SendLastReasoningResponse = true
+				if data, err := json.Marshal(response); err == nil {
+					dataChan <- string(data)
+					return
+				}
+			}
+
+			// Convert reasoning content to regular content
+			if len(choice.Delta.ReasoningContent) > 0 {
+				choice.Delta.Content = choice.Delta.ReasoningContent
+				choice.Delta.ReasoningContent = ""
+			}
+		}
+
 		if data, err := json.Marshal(openaiResponse.ChatCompletionStreamResponse); err == nil {
 			dataChan <- string(data)
 			return
