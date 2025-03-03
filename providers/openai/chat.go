@@ -3,10 +3,12 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"one-api/common"
 	"one-api/common/config"
+	"one-api/common/logger"
 	"one-api/common/requester"
 	"one-api/types"
 	"strings"
@@ -17,6 +19,7 @@ type OpenAIStreamHandler struct {
 	ModelName                 string
 	isAzure                   bool
 	EscapeJSON                bool
+	Think2Content             bool
 	IsFirstResponse           bool
 	SendLastReasoningResponse bool
 }
@@ -90,11 +93,17 @@ func (p *OpenAIProvider) CreateChatCompletionStream(request *types.ChatCompletio
 		return nil, errWithCode
 	}
 
+	// 获取请求头
+	headers := p.GetRequestHeaders()
+	_, think2content := headers["thinking_to_content"]
+	logger.LogInfo(p.Context, fmt.Sprintf("thinking_to_content: %v", think2content))
+
 	chatHandler := OpenAIStreamHandler{
 		Usage:                     p.Usage,
 		ModelName:                 request.Model,
 		isAzure:                   p.IsAzure,
 		EscapeJSON:                p.StreamEscapeJSON,
+		Think2Content:             think2content,
 		IsFirstResponse:           true,
 		SendLastReasoningResponse: false,
 	}
@@ -157,23 +166,30 @@ func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan s
 		}
 	}
 
-	if h.EscapeJSON {
-
+	if h.Think2Content {
 		// Handle first message
 		if h.IsFirstResponse {
+			if data, err := JsonMarshalNoSetEscapeHTML(openaiResponse.ChatCompletionStreamResponse); err == nil {
+				dataChan <- string(data)
+			}
+
 			response := openaiResponse.ChatCompletionStreamResponse.Copy()
 			for j := range response.Choices {
-				response.Choices[j].Delta.Content = "<think>\n"
-				response.Choices[j].Delta.ReasoningContent = ""
+				delta := types.ChatCompletionStreamChoiceDelta{
+					Content:          "<think>\n",
+					ReasoningContent: "",
+				}
+				response.Choices[j].Delta = delta
 			}
-			if data, err := json.Marshal(response); err == nil {
+			if data, err := JsonMarshalNoSetEscapeHTML(response); err == nil {
 				dataChan <- string(data)
 			}
 			h.IsFirstResponse = false
+			return
 		}
 
 		// Process each choice
-		for _, choice := range openaiResponse.ChatCompletionStreamResponse.Choices {
+		for i, choice := range openaiResponse.ChatCompletionStreamResponse.Choices {
 
 			// Handle transition from thinking to content
 			if len(choice.Delta.Content) > 0 && !h.SendLastReasoningResponse {
@@ -183,7 +199,7 @@ func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan s
 					response.Choices[j].Delta.ReasoningContent = ""
 				}
 				h.SendLastReasoningResponse = true
-				if data, err := json.Marshal(response); err == nil {
+				if data, err := JsonMarshalNoSetEscapeHTML(response); err == nil {
 					dataChan <- string(data)
 					return
 				}
@@ -191,12 +207,14 @@ func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan s
 
 			// Convert reasoning content to regular content
 			if len(choice.Delta.ReasoningContent) > 0 {
-				choice.Delta.Content = choice.Delta.ReasoningContent
-				choice.Delta.ReasoningContent = ""
+				openaiResponse.ChatCompletionStreamResponse.Choices[i].Delta.Content = choice.Delta.ReasoningContent
+				openaiResponse.ChatCompletionStreamResponse.Choices[i].Delta.ReasoningContent = ""
 			}
 		}
+	}
 
-		if data, err := json.Marshal(openaiResponse.ChatCompletionStreamResponse); err == nil {
+	if h.EscapeJSON || h.Think2Content {
+		if data, err := JsonMarshalNoSetEscapeHTML(openaiResponse.ChatCompletionStreamResponse); err == nil {
 			dataChan <- string(data)
 			return
 		}
@@ -216,4 +234,15 @@ func otherProcessing(request *types.ChatCompletionRequest, otherArg string) {
 			}
 		}
 	}
+}
+
+func JsonMarshalNoSetEscapeHTML(data interface{}) ([]byte, error) {
+	bf := bytes.NewBuffer([]byte{})
+	jsonEncoder := json.NewEncoder(bf)
+	jsonEncoder.SetEscapeHTML(false)
+	if err := jsonEncoder.Encode(data); err != nil {
+		return nil, err
+	}
+
+	return bf.Bytes(), nil
 }
