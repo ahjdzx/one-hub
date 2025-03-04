@@ -13,6 +13,7 @@ $(WEBDIR)/build:
 
 one-api: web
 	$(GOBUILD) -o $(DISTDIR)/$(NAME)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(DISTDIR)/$(NAME).linux
 
 clean:
 	rm -rf $(DISTDIR) && rm -rf $(WEBDIR)/build
