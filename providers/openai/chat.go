@@ -11,8 +11,12 @@ import (
 	"one-api/common/logger"
 	"one-api/common/requester"
 	"one-api/types"
+	"strconv"
 	"strings"
 )
+
+// 思维链转内容 http header key
+const ThinkContentHeader = "X-Thinking-To-Content"
 
 type OpenAIStreamHandler struct {
 	Usage                     *types.Usage
@@ -93,10 +97,8 @@ func (p *OpenAIProvider) CreateChatCompletionStream(request *types.ChatCompletio
 		return nil, errWithCode
 	}
 
-	// 获取请求头
-	headers := p.GetRequestHeaders()
-	_, think2content := headers["thinking_to_content"]
-	logger.LogInfo(p.Context, fmt.Sprintf("thinking_to_content: %v", think2content))
+	think2content := p.getThink2content()
+	logger.LogInfo(p.Context, fmt.Sprintf("Header %s: %v", ThinkContentHeader, think2content))
 
 	chatHandler := OpenAIStreamHandler{
 		Usage:                     p.Usage,
@@ -109,6 +111,25 @@ func (p *OpenAIProvider) CreateChatCompletionStream(request *types.ChatCompletio
 	}
 
 	return requester.RequestStream[string](p.Requester, resp, chatHandler.HandlerChatStream)
+}
+
+func (p *OpenAIProvider) getThink2content() bool {
+	think2content := false
+	// 优先使用传入的http header
+	value := ""
+	if p.Context != nil {
+		value = p.Context.Request.Header.Get(ThinkContentHeader)
+	}
+	if value == "" {
+		// 获取渠道配置的请求头
+		value, _ = p.GetRequestHeaders()[ThinkContentHeader]
+	}
+	var err error
+	think2content, err = strconv.ParseBool(value)
+	if err != nil {
+		logger.LogError(p.Context, fmt.Sprintf("Header %s: %v", ThinkContentHeader, value))
+	}
+	return think2content
 }
 
 func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan string, errChan chan error) {
@@ -193,14 +214,12 @@ func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan s
 
 			// Handle transition from thinking to content
 			if len(choice.Delta.Content) > 0 && !h.SendLastReasoningResponse {
-				response := openaiResponse.ChatCompletionStreamResponse.Copy()
-				for j := range response.Choices {
-					response.Choices[j].Delta.Content = "\n</think>"
-					response.Choices[j].Delta.ReasoningContent = ""
-				}
 				h.SendLastReasoningResponse = true
-				if data, err := JsonMarshalNoSetEscapeHTML(response); err == nil {
-					dataChan <- string(data)
+				response1 := openaiResponse.ChatCompletionStreamResponse.Copy()
+				response2 := openaiResponse.ChatCompletionStreamResponse.Copy()
+				sendThinkData(response2, dataChan, "\n</think>")
+
+				if err := sendThinkData(response1, dataChan, "\n\n"); err == nil {
 					return
 				}
 			}
@@ -220,6 +239,18 @@ func (h *OpenAIStreamHandler) HandlerChatStream(rawLine *[]byte, dataChan chan s
 		}
 	}
 	dataChan <- string(*rawLine)
+}
+
+func sendThinkData(response *types.ChatCompletionStreamResponse, dataChan chan string, content string) error {
+	for j := range response.Choices {
+		response.Choices[j].Delta.Content = content
+		response.Choices[j].Delta.ReasoningContent = ""
+	}
+	data, err := JsonMarshalNoSetEscapeHTML(response)
+	if err == nil {
+		dataChan <- string(data)
+	}
+	return err
 }
 
 func otherProcessing(request *types.ChatCompletionRequest, otherArg string) {
