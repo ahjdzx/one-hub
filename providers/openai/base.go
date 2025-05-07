@@ -128,7 +128,7 @@ func (p *OpenAIProvider) GetFullRequestURL(requestURL string, modelName string) 
 		apiVersion := p.Channel.Other
 		if modelName != "" {
 			// 检测模型是是否包含 . 如果有则直接去掉
-			modelName = strings.Replace(modelName, ".", "", -1)
+			// modelName = strings.Replace(modelName, ".", "", -1)
 
 			if modelName == "dall-e-2" {
 				// 因为dall-e-3需要api-version=2023-12-01-preview，但是该版本
@@ -180,6 +180,8 @@ func (p *OpenAIProvider) GetRequestTextBody(relayMode int, ModelName string, req
 	}
 	// 获取请求地址
 	fullRequestURL := p.GetFullRequestURL(url, ModelName)
+
+	// logger.LogInfo(p.Context, "fullRequestURL: "+fullRequestURL)
 
 	// 获取请求头
 	headers := p.GetRequestHeaders()
