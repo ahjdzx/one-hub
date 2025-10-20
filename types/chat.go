@@ -52,6 +52,7 @@ type ChatCompletionMessage struct {
 	ToolCalls        []*ChatCompletionToolCalls       `json:"tool_calls,omitempty"`
 	ToolCallID       string                           `json:"tool_call_id,omitempty"`
 	Audio            any                              `json:"audio,omitempty"`
+	Images           any                              `json:"images,omitempty"`
 }
 
 func (m ChatCompletionMessage) StringContent() string {
